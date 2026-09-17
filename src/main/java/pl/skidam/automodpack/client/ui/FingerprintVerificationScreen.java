@@ -11,6 +11,7 @@ import pl.skidam.automodpack.client.ui.versioned.VersionedMatrices;
 import pl.skidam.automodpack.client.ui.versioned.VersionedScreen;
 import pl.skidam.automodpack.client.ui.versioned.VersionedText;
 import pl.skidam.automodpack_core.GlobalVariables;
+import pl.skidam.automodpack_core.utils.CertificateInput;
 
 public class FingerprintVerificationScreen extends VersionedScreen {
     private final Screen parent;
@@ -56,7 +57,7 @@ public class FingerprintVerificationScreen extends VersionedScreen {
         this.textField = new EditBox(this.font, this.width / 2 - 170, this.height / 2 + 15, 340, 20,
                 VersionedText.literal("")
         );
-        this.textField.setMaxLength(64);
+        this.textField.setMaxLength(128);
 
         // Back button (left)
         this.backButton = buttonWidget(this.width / 2 - 155, this.height / 2 + 80, 100, 20,
@@ -91,9 +92,9 @@ public class FingerprintVerificationScreen extends VersionedScreen {
     }
 
     private void verifyFingerprint() {
-        String input = textField.getValue().strip();
+        String input = textField.getValue();
         
-        if (input.equals(serverFingerprint)) {
+        if (CertificateInput.matchesFingerprint(input, serverFingerprint)) {
             verifyButton.active = false;
             this.validated = true;
             if (this.minecraft != null) {
@@ -110,14 +111,6 @@ public class FingerprintVerificationScreen extends VersionedScreen {
                 *//*?}*/
             }
         }
-    }
-
-    private String getConcatenatedFingerprint() {
-        // Concatenate fingerprint to fit on screen (first 16 chars + "..." + last 16 chars)
-        if (serverFingerprint.length() <= 35) {
-            return serverFingerprint;
-        }
-        return serverFingerprint.substring(0, 16) + "..." + serverFingerprint.substring(serverFingerprint.length() - 16);
     }
 
     @Override
@@ -144,15 +137,21 @@ public class FingerprintVerificationScreen extends VersionedScreen {
                 VersionedText.translatable("automodpack.validation.fingerprint.label"),
                 this.width / 2, this.height / 2 - 35, TextColors.WHITE);
 
-        // Server fingerprint value (concatenated, gray, not bold - intentionally harder to read)
+        // Show the complete fingerprint in two lines so the value can actually be verified.
+        int split = Math.min(32, serverFingerprint.length());
         drawCenteredTextWithShadow(matrices, this.font, 
-                VersionedText.literal(getConcatenatedFingerprint()),
+                VersionedText.literal(serverFingerprint.substring(0, split)),
                 this.width / 2, this.height / 2 - 35 + lineHeight, TextColors.LIGHT_GRAY);
+        if (split < serverFingerprint.length()) {
+            drawCenteredTextWithShadow(matrices, this.font,
+                    VersionedText.literal(serverFingerprint.substring(split)),
+                    this.width / 2, this.height / 2 - 35 + lineHeight * 2, TextColors.LIGHT_GRAY);
+        }
 
         // Confirmation text
         drawCenteredTextWithShadow(matrices, this.font, 
                 VersionedText.translatable("automodpack.validation.confirm.text"),
-                this.width / 2, this.height / 2 - 15 + lineHeight, TextColors.WHITE);
+                this.width / 2, this.height / 2 - 3 + lineHeight, TextColors.WHITE);
     }
 
     @Override

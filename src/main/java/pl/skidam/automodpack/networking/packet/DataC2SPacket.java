@@ -5,10 +5,10 @@ import pl.skidam.automodpack.mixin.core.ClientConnectionAccessor;
 import pl.skidam.automodpack.mixin.core.ClientLoginNetworkHandlerAccessor;
 import pl.skidam.automodpack.networking.ModPackets;
 import pl.skidam.automodpack.networking.content.DataPacket;
-import pl.skidam.automodpack_core.auth.Secrets;
 import pl.skidam.automodpack_core.auth.SecretsStore;
 import pl.skidam.automodpack_core.config.Jsons;
-import pl.skidam.automodpack_core.utils.AddressHelpers;
+import pl.skidam.automodpack_core.protocol.ZstdNetCompatibility;
+import pl.skidam.automodpack_core.protocol.DownloadRoutes;
 import pl.skidam.automodpack_loader_core.ReLauncher;
 import pl.skidam.automodpack_loader_core.client.ModpackUpdater;
 import pl.skidam.automodpack_loader_core.client.ModpackUtils;
@@ -27,103 +27,66 @@ import static pl.skidam.automodpack_core.GlobalVariables.*;
 import static pl.skidam.automodpack_core.config.ConfigTools.GSON;
 
 public class DataC2SPacket {
-    public static CompletableFuture<FriendlyByteBuf> receive(Minecraft Minecraft, ClientHandshakePacketListenerImpl handler, FriendlyByteBuf buf) {
+    public static CompletableFuture<FriendlyByteBuf> receive(Minecraft client, ClientHandshakePacketListenerImpl handler, FriendlyByteBuf buf) {
         try {
-            String serverResponse = buf.readUtf(Short.MAX_VALUE);
-            DataPacket dataPacket = DataPacket.fromJson(serverResponse);
-
-            String packetAddress = dataPacket.address;
-            int packetPort = dataPacket.port;
-            String modpackName = dataPacket.modpackName;
-            Secrets.Secret secret = dataPacket.secret;
-            boolean modRequired = dataPacket.modRequired;
-            boolean requiresMagic = dataPacket.requiresMagic;
-
-            if (modRequired) {
-                // TODO set screen to refreshed danger screen which will ask user to install modpack with two options
-                // 1. Disconnect and install modpack
-                // 2. Dont disconnect and join server
-            }
-
-            InetSocketAddress serverAddress = ModPackets.getOriginalServerAddress();
-            ModPackets.setOriginalServerAddress(null); // Reset for next server reconnection
-            if (serverAddress == null) {
-                LOGGER.error("Server address is null! Something gone very wrong! Please report this issue! https://github.com/Skidamek/AutoModpack/issues");
-                return CompletableFuture.completedFuture(new FriendlyByteBuf(Unpooled.buffer()));
-            }
-
-            // Get actual address of the server client have connected to and format it
-            InetSocketAddress connectedAddress = (InetSocketAddress) ((ClientLoginNetworkHandlerAccessor) handler).getConnection().getRemoteAddress();
-            String effectiveHost;
-            int effectivePort;
-
-            // If the packet specifies a non-blank address, use it or else use address from the server client have connected to.
-            if (packetAddress.isBlank()) {
-                effectiveHost = connectedAddress.getHostString();
-            } else {
-                effectiveHost = packetAddress;
-            }
-
-            if (packetPort == -1) {
-                effectivePort = connectedAddress.getPort();
-            } else {
-                effectivePort = packetPort;
-            }
-
-            // Construct the final modpack address
-            InetSocketAddress modpackAddress = AddressHelpers.format(effectiveHost, effectivePort);
-
-            LOGGER.info("Modpack address: {}:{} Requires to follow magic protocol: {}", modpackAddress.getHostString(), modpackAddress.getPort(), requiresMagic);
-
-            Boolean needsDisconnecting = null;
-            FriendlyByteBuf response = new FriendlyByteBuf(Unpooled.buffer());
-
-            Path modpackDir = ModpackUtils.getModpackPath(modpackAddress, modpackName);
-            Jsons.ModpackAddresses modpackAddresses = new Jsons.ModpackAddresses(modpackAddress, serverAddress, requiresMagic);
-            var optionalServerModpackContent = ModpackUtils.requestServerModpackContent(modpackAddresses, secret, true);
-
-            if (optionalServerModpackContent.isPresent()) {
-                ModpackUtils.UpdateCheckResult updateCheckResult = ModpackUtils.isUpdate(optionalServerModpackContent.get(), modpackDir);
-
-                if (updateCheckResult.requiresUpdate()) {
-                    disconnectImmediately(handler);
-                    new ModpackUpdater(optionalServerModpackContent.get(), modpackAddresses, secret, modpackDir).processModpackUpdate(updateCheckResult);
-                    needsDisconnecting = true;
-                } else {
-                    boolean selectedModpackChanged = ModpackUtils.selectModpack(modpackDir, modpackAddresses, Set.of());
-
-                    // save latest modpack content
-                    var modpackContentFile = modpackDir.resolve(hostModpackContentFile.getFileName());
-                    if (Files.exists(modpackContentFile)) {
-                        Files.writeString(modpackContentFile, GSON.toJson(optionalServerModpackContent.get()));
-                    }
-
-                    if (selectedModpackChanged) {
-                        SecretsStore.saveClientSecret(clientConfig.selectedModpack, secret);
-                        disconnectImmediately(handler);
-                        new ReLauncher(modpackDir, UpdateType.SELECT, null).restart(false);
-                        needsDisconnecting = true;
-                    } else {
-                        needsDisconnecting = false;
-                    }
-                }
-            } else if (ModpackUtils.canConnectModpackHost(modpackAddresses)) { // Can't download modpack because e.g. certificate is not verified but it can connect to the modpack host
-                needsDisconnecting = true;
-            }
-
-            if (clientConfig.selectedModpack != null && !clientConfig.selectedModpack.isBlank()) {
-                SecretsStore.saveClientSecret(clientConfig.selectedModpack, secret);
-            }
-
-            response.writeUtf(String.valueOf(needsDisconnecting), Short.MAX_VALUE);
-
-            return CompletableFuture.completedFuture(response);
+            // Consume the network buffer and capture the local proxy while this login still owns it.
+            DataPacket packet = DataPacket.fromJson(buf.readUtf(Short.MAX_VALUE));
+            InetSocketAddress connected = (InetSocketAddress) ((ClientLoginNetworkHandlerAccessor) handler)
+                    .getConnection().getRemoteAddress();
+            InetSocketAddress original = ModPackets.getOriginalServerAddress();
+            ModPackets.setOriginalServerAddress(null);
+            if (original == null) original = connected;
+            var proxy = ZstdNetCompatibility.captureRoute(connected, handler.getClass().getClassLoader());
+            Jsons.ModpackAddresses addresses = DownloadRoutes.resolve(packet.address, packet.port,
+                    packet.requiresMagic, original, connected, proxy);
+            LOGGER.info("Resolved modpack route: {}", addresses.route);
+            // Certificate confirmation and file I/O must not block Minecraft's network event loop.
+            return CompletableFuture.supplyAsync(() -> process(handler, packet, addresses));
         } catch (Exception e) {
-            LOGGER.error("Error while handling data packet", e);
-            FriendlyByteBuf response = new FriendlyByteBuf(Unpooled.buffer());
-            response.writeUtf("null", Short.MAX_VALUE);
-            return CompletableFuture.completedFuture(new FriendlyByteBuf(Unpooled.buffer()));
+            LOGGER.error("Unable to resolve modpack download route", e);
+            return CompletableFuture.completedFuture(response(null));
         }
+    }
+
+    private static FriendlyByteBuf process(ClientHandshakePacketListenerImpl handler, DataPacket packet,
+            Jsons.ModpackAddresses addresses) {
+        try {
+            Path modpackDir = ModpackUtils.getModpackPath(addresses.downloadAddress(), packet.modpackName);
+            var content = ModpackUtils.requestServerModpackContent(addresses, packet.secret, true);
+            if (content.isEmpty()) {
+                LOGGER.error("Could not retrieve modpack content using {}", addresses.route);
+                return response(null);
+            }
+            boolean disconnect = false;
+            var update = ModpackUtils.isUpdate(content.get(), modpackDir);
+            if (update.requiresUpdate()) {
+                disconnectImmediately(handler);
+                new ModpackUpdater(content.get(), addresses, packet.secret, modpackDir).processModpackUpdate(update);
+                disconnect = true;
+            } else {
+                boolean selected = ModpackUtils.selectModpack(modpackDir, addresses, Set.of());
+                Path contentFile = modpackDir.resolve(hostModpackContentFile.getFileName());
+                if (Files.exists(contentFile)) Files.writeString(contentFile, GSON.toJson(content.get()));
+                if (selected) {
+                    SecretsStore.saveClientSecret(clientConfig.selectedModpack, packet.secret);
+                    disconnectImmediately(handler);
+                    new ReLauncher(modpackDir, UpdateType.SELECT, null).restart(false);
+                    disconnect = true;
+                }
+            }
+            if (clientConfig.selectedModpack != null && !clientConfig.selectedModpack.isBlank())
+                SecretsStore.saveClientSecret(clientConfig.selectedModpack, packet.secret);
+            return response(disconnect);
+        } catch (Exception e) {
+            LOGGER.error("Error while processing modpack download", e);
+            return response(null);
+        }
+    }
+
+    private static FriendlyByteBuf response(Boolean disconnect) {
+        FriendlyByteBuf response = new FriendlyByteBuf(Unpooled.buffer());
+        response.writeUtf(String.valueOf(disconnect), Short.MAX_VALUE);
+        return response;
     }
 
     private static void disconnectImmediately(ClientHandshakePacketListenerImpl clientLoginNetworkHandler) {

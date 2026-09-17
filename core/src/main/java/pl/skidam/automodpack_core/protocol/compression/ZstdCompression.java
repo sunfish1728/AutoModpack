@@ -2,6 +2,7 @@ package pl.skidam.automodpack_core.protocol.compression;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
@@ -23,6 +24,7 @@ public class ZstdCompression implements CompressionCodec {
     private static MethodHandle compressMethodHandle;
     private static MethodHandle decompressMethodHandle;
     private static boolean initialized = true;
+    private static ClassLoader nativeLoader;
 
     static {
         try {
@@ -36,6 +38,7 @@ public class ZstdCompression implements CompressionCodec {
             tempJar.toFile().deleteOnExit();
 
             URLClassLoader loader = new URLClassLoader(new URL[]{tempJar.toUri().toURL()}, ZstdCompression.class.getClassLoader());
+            nativeLoader = loader;
 
             Class<?> zstdClass = Class.forName("com.github.luben.zstd.Zstd", true, loader);
             Method compressMethod = zstdClass.getMethod("compress", byte[].class);
@@ -52,6 +55,28 @@ public class ZstdCompression implements CompressionCodec {
     @Override
     public boolean isInitialized() {
         return initialized;
+    }
+
+    public static InputStream inputStream(InputStream input) throws IOException {
+        try {
+            if (!initialized) throw new IOException("Embedded zstd-jni is unavailable");
+            return (InputStream) Class.forName("com.github.luben.zstd.ZstdInputStream", true, nativeLoader)
+                    .getConstructor(InputStream.class).newInstance(input);
+        } catch (ReflectiveOperationException e) {
+            throw new IOException("Cannot open zstdnet input stream", e);
+        }
+    }
+
+    public static OutputStream outputStream(OutputStream output) throws IOException {
+        try {
+            if (!initialized) throw new IOException("Embedded zstd-jni is unavailable");
+            Class<?> type = Class.forName("com.github.luben.zstd.ZstdOutputStream", true, nativeLoader);
+            Object stream = type.getConstructor(OutputStream.class, int.class).newInstance(output, 3);
+            type.getMethod("setCloseFrameOnFlush", boolean.class).invoke(stream, false);
+            return (OutputStream) stream;
+        } catch (ReflectiveOperationException e) {
+            throw new IOException("Cannot open zstdnet output stream", e);
+        }
     }
 
     @Override

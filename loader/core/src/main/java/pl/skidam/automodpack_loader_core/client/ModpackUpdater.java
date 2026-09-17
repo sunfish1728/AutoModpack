@@ -270,7 +270,7 @@ public class ModpackUpdater {
                 LOGGER.info("In queue left {} files to download ({}MB)", wholeQueue, totalBytesToDownload / 1024 / 1024);
 
                 DownloadClient downloadClient = DownloadClient.tryCreate(modpackAddresses, modpackSecret.secretBytes(),
-                        Math.min(wholeQueue, 5), ModpackUtils.userValidationCallback(modpackAddresses.hostAddress, false));
+                        Math.min(wholeQueue, 5), ModpackUtils.userValidationCallback(modpackAddresses.downloadAddress(), false));
                 if (downloadClient == null) {
                     return;
                 }
@@ -366,7 +366,7 @@ public class ModpackUpdater {
                         // filter list to only the failed downloads
                         var refreshedFilteredList = refreshedContent.list.stream().filter(item -> hashesToRefresh.containsKey(item.file)).toList();
 
-                        downloadClient = DownloadClient.tryCreate(modpackAddresses, modpackSecret.secretBytes(), Math.min(refreshedFilteredList.size(), 5), ModpackUtils.userValidationCallback(modpackAddresses.hostAddress, false));
+                        downloadClient = DownloadClient.tryCreate(modpackAddresses, modpackSecret.secretBytes(), Math.min(refreshedFilteredList.size(), 5), ModpackUtils.userValidationCallback(modpackAddresses.downloadAddress(), false));
                         if (downloadClient == null) {
                             return;
                         }

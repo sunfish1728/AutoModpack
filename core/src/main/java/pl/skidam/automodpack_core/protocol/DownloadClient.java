@@ -4,8 +4,6 @@ import static pl.skidam.automodpack_core.GlobalVariables.*;
 import static pl.skidam.automodpack_core.protocol.NetUtils.*;
 
 import java.io.*;
-import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,7 +19,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.IntConsumer;
-import java.util.stream.IntStream;
 import javax.net.ssl.*;
 import pl.skidam.automodpack_core.config.Jsons;
 import pl.skidam.automodpack_core.protocol.compression.CompressionCodec;
@@ -31,7 +28,7 @@ import pl.skidam.automodpack_core.utils.PlatformUtils;
 public class DownloadClient implements AutoCloseable {
 
     private final List<Connection> connections = new ArrayList<>();
-    private InetSocketAddress address = null;
+    private final DownloadRoute route;
 
     /**
      * Transports the connection and the specific SSLContext used to create it.
@@ -41,47 +38,31 @@ public class DownloadClient implements AutoCloseable {
 
     /**
      * Initializes the client by establishing a single "probe" connection to validate/recover SSL trust,
-     * then hydrates the remaining connection pool in parallel using the validated SSL context.
+     * then opens the remaining connections using the validated SSL context.
      */
     public DownloadClient(Jsons.ModpackAddresses modpackAddresses, byte[] secretBytes, int poolSize, Function<X509Certificate, Boolean> trustedByUserCallback) throws IOException {
         if (poolSize < 1) throw new IllegalArgumentException("Pool size must be greater than 0");
 
+        this.route = DownloadRoutes.from(modpackAddresses);
         KeyStore keyStore = loadDefaultKeyStore();
 
         // Establish probe to handle potential SSL handshake errors (e.g., self-signed certs) sequentially before pooling.
         InitialConnectionResult probe = establishProbeConnection(modpackAddresses, keyStore, trustedByUserCallback);
 
-        if (probe.connection.getSocket() != null && !probe.connection.getSocket().isClosed()) {
+        try {
             if (secretBytes == null) {
                 probe.connection().getSocket().close();
-            } else {
-                connections.add(new Connection(probe.connection, secretBytes));
+                return;
             }
+            connections.add(new Connection(probe.connection(), secretBytes));
+            for (int i = 1; i < poolSize; i++) {
+                connections.add(new Connection(getPreValidationConnection(modpackAddresses, probe.sslContext()), secretBytes));
+            }
+            LOGGER.info("Download client initialized with {} connections to {}", connections.size(), route.endpoint());
+        } catch (IOException | RuntimeException e) {
+            close();
+            throw e;
         }
-
-        if (secretBytes == null) {
-            return;
-        }
-
-        int remainingNeeded = poolSize - connections.size();
-        if (remainingNeeded < 1) {
-            return;
-        }
-
-        // Parallel pool hydration using the session-aware SSLContext from the probe.
-        List<Connection> newConnections = IntStream.range(0, remainingNeeded)
-                .parallel()
-                .mapToObj(i -> {
-                    try {
-                        return new Connection(getPreValidationConnection(modpackAddresses, probe.sslContext), secretBytes);
-                    } catch (IOException e) {
-                        throw new CompletionException(e);
-                    }
-                })
-                .toList();
-
-        connections.addAll(newConnections);
-        LOGGER.info("Download client initialized with {} connections to {}", connections.size(), modpackAddresses.hostAddress);
     }
 
     /**
@@ -111,7 +92,7 @@ public class DownloadClient implements AutoCloseable {
         }
 
         try {
-            keyStore.setCertificateEntry(addresses.hostAddress.getHostString(), chain[0]);
+            keyStore.setCertificateEntry(addresses.downloadAddress().getHostString(), chain[0]);
 
             // Re-initialize context with the updated KeyStore containing the user-trusted cert.
             SSLContext trustedContext = createSSLContext(keyStore, null);
@@ -135,14 +116,7 @@ public class DownloadClient implements AutoCloseable {
     }
 
     private PreValidationConnection getPreValidationConnection(Jsons.ModpackAddresses modpackAddresses, SSLContext sharedContext) throws IOException {
-        String hostName = modpackAddresses.hostAddress.getHostString();
-        if (address == null) {
-            address = new InetSocketAddress(hostName, modpackAddresses.hostAddress.getPort());
-            if (address.isUnresolved()) {
-                throw new IOException("Failed to resolve host address: " + hostName);
-            }
-        }
-        return new PreValidationConnection(address, modpackAddresses, sharedContext);
+        return new PreValidationConnection(route, sharedContext);
     }
 
     /**
@@ -170,25 +144,25 @@ public class DownloadClient implements AutoCloseable {
         try {
             return new DownloadClient(modpackAddresses, secretBytes, poolSize, trustedByUserCallback);
         } catch (IOException e) {
-            LOGGER.error("Failed to create download client: {}", e.getMessage());
-            LOGGER.debug(e);
+            LOGGER.error("Failed to create download client for {} (transport: {}): {}",
+                    modpackAddresses.downloadAddress(), DownloadRoutes.from(modpackAddresses).transport(), e.toString(), e);
             return null;
         }
     }
 
     /**
-     * Recursively searches for an idle connection in the pool.
+     * Selects an idle connection and discards closed members.
      * Marks the found connection as busy to prevent race conditions.
      */
     private synchronized Connection getFreeConnection() {
         Iterator<Connection> iterator = connections.iterator();
         while (iterator.hasNext()) {
             Connection conn = iterator.next();
+            if (!conn.isActive()) {
+                iterator.remove();
+                continue;
+            }
             if (!conn.isBusy()) {
-                if (!conn.isActive()) {
-                    iterator.remove();
-                    return getFreeConnection();
-                }
                 conn.setBusy(true);
                 return conn;
             }
@@ -205,7 +179,7 @@ public class DownloadClient implements AutoCloseable {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         for (Connection conn : connections) {
             conn.close();
         }
@@ -221,53 +195,8 @@ class PreValidationConnection {
 
     private final SSLSocket socket;
 
-    public PreValidationConnection(InetSocketAddress resolvedHostAddress, Jsons.ModpackAddresses modpackAddresses, SSLContext sslContext) throws IOException {
-        Socket plainSocket = new Socket();
-        plainSocket.connect(resolvedHostAddress, 10000);
-        plainSocket.setSoTimeout(10000);
-
-        // Perform custom "Magic" handshake over plain text if required by config.
-        if (modpackAddresses.requiresMagic) {
-            try {
-                DataOutputStream plainOut = new DataOutputStream(new BufferedOutputStream(plainSocket.getOutputStream()));
-                DataInputStream plainIn = new DataInputStream(new BufferedInputStream(plainSocket.getInputStream()));
-
-                byte[] hostBytes = resolvedHostAddress.getHostString().getBytes(StandardCharsets.UTF_8);
-
-                plainOut.writeInt(MAGIC_AMMH);
-                plainOut.writeShort(hostBytes.length);
-                plainOut.write(hostBytes);
-                plainOut.flush();
-
-                int handshakeResponse = plainIn.readInt();
-                if (handshakeResponse != MAGIC_AMOK) {
-                    throw new IOException("Invalid response from server: " + handshakeResponse);
-                }
-            } catch (IOException e) {
-                try { plainSocket.close(); } catch (IOException ignored) {}
-                throw e;
-            }
-        }
-
-        // Layer SSL over the existing socket.
-        SSLSocketFactory factory = sslContext.getSocketFactory();
-        SSLSocket sslSocket = (SSLSocket) factory.createSocket(plainSocket, resolvedHostAddress.getHostString(), resolvedHostAddress.getPort(), true);
-
-        sslSocket.setEnabledProtocols(new String[]{"TLSv1.3"});
-        sslSocket.setEnabledCipherSuites(new String[]{"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"});
-
-        SSLParameters sslParameters = new SSLParameters();
-        sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
-        sslSocket.setSSLParameters(sslParameters);
-
-        try {
-            sslSocket.startHandshake();
-        } catch (IOException e) {
-            try { sslSocket.close(); } catch (IOException ignored) {}
-            throw e;
-        }
-
-        this.socket = sslSocket;
+    public PreValidationConnection(DownloadRoute route, SSLContext sslContext) throws IOException {
+        this.socket = DownloadTransport.connect(route, sslContext);
     }
 
     protected SSLSocket getSocket() {
@@ -311,6 +240,7 @@ class Connection implements AutoCloseable {
             sendEchoConfig();
         } catch (IOException e) {
             LOGGER.error("Failed to configure connection", e);
+            close();
             throw e;
         }
     }
@@ -388,16 +318,8 @@ class Connection implements AutoCloseable {
      * Cleans up input stream and releases the busy flag upon completion.
      */
     private void finalBlock(Exception exception) {
-        try {
-            int available;
-            while ((available = in.available()) > 0) {
-                in.skipBytes(available);
-            }
-        } catch (IOException e) {
-            if (exception == null) throw new CompletionException(e);
-        } finally {
-            if (exception == null) setBusy(false);
-        }
+        if (exception == null) setBusy(false);
+        else close();
     }
 
     /**
@@ -469,6 +391,7 @@ class Connection implements AutoCloseable {
             }
 
             long expectedFileSize = headerIn.readLong();
+            if (expectedFileSize < 0) throw new IOException("Negative file size");
             long receivedBytes = 0;
 
             try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(destination,
@@ -478,7 +401,8 @@ class Connection implements AutoCloseable {
 
                 while (receivedBytes < expectedFileSize) {
                     byte[] dataFrame = readProtocolMessageFrame();
-                    int toWrite = Math.min(dataFrame.length, (int) (expectedFileSize - receivedBytes));
+                    if (dataFrame.length == 0) throw new IOException("Empty data frame before end of file");
+                    int toWrite = (int) Math.min(dataFrame.length, expectedFileSize - receivedBytes);
                     fos.write(dataFrame, 0, toWrite);
                     receivedBytes += toWrite;
                     if (chunkCallback != null) chunkCallback.accept(toWrite);

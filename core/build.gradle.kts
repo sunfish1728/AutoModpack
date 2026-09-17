@@ -31,6 +31,16 @@ dependencies {
 
     testImplementation("org.junit.jupiter:junit-jupiter:6.0.1")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.1")
+    testImplementation(files("../libs/zstd-jni-1.5.7-6.jar"))
+    providers.gradleProperty("zstdnetJar").orNull?.let { testImplementation(files(it)) }
+    providers.gradleProperty("zstdnetLoggingJar").orNull?.let { testImplementation(files(it)) }
+}
+
+tasks.named<ProcessResources>("processTestResources") {
+    from("../libs/zstd-jni-1.5.7-6.jar") {
+        into("META-INF/jarjar")
+        rename { "zstd-jni.jar" }
+    }
 }
 
 java {
@@ -63,4 +73,23 @@ tasks.named<ShadowJar>("shadowJar") {
 
 tasks.named("assemble") {
     dependsOn("shadowJar")
+}
+
+providers.gradleProperty("packagedJar").orNull?.let { artifact ->
+    tasks.register<Test>("packagedTest") {
+        dependsOn("testClasses")
+        useJUnitPlatform()
+        testClassesDirs = sourceSets.test.get().output.classesDirs
+        classpath = files(artifact) + sourceSets.test.get().output + configurations.testRuntimeClasspath.get()
+        include("**/CertificateInputTest.class", "**/DownloadRoutesTest.class", "**/ZstdDownloadTest.class", "**/ZstdRealProxyTest.class", "**/DownloadTransportIntegrationTest.class", "**/ProtocolFragmentationTest.class", "**/ZstdSocketLifecycleTest.class")
+    }
+}
+
+providers.gradleProperty("testNettyVersion").orNull?.let { nettyVersion ->
+    configurations.named("testRuntimeClasspath") {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "io.netty") useVersion(nettyVersion)
+            if (requested.group == "com.google.code.gson") useVersion("2.10")
+        }
+    }
 }
