@@ -46,7 +46,12 @@ val mergeJarTask = tasks.register<MergeJarTask>("mergeJar") {
     this.buildDirectory.set(layout.buildDirectory)
     this.outputJar.set(layout.buildDirectory.file("merged-jar-path.txt"))
 
-    val filesToHash = mutableListOf<Any>()
+    dependsOn(tasks.named("jar"))
+    if (project.name.endsWith("-forge")) dependsOn("reobfJar")
+    dependsOn(":loader-${getLoaderModuleName(project.name)}:assemble")
+    inputs.files(tasks.named("jar"))
+    outputs.dir(File(mergedDirPath.get()))
+    val filesToHash = mutableListOf<Any>(tasks.named("jar"))
     for (module in getAllDependentLoaderModules(project.name)) {
         val modLoaderJar = rootProject.project(module).tasks.named("jar")
         filesToHash.add(modLoaderJar)

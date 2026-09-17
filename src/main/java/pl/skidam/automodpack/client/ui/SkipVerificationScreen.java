@@ -11,6 +11,7 @@ import pl.skidam.automodpack.client.ui.versioned.VersionedMatrices;
 import pl.skidam.automodpack.client.ui.versioned.VersionedScreen;
 import pl.skidam.automodpack.client.ui.versioned.VersionedText;
 import pl.skidam.automodpack_core.GlobalVariables;
+import pl.skidam.automodpack_core.utils.CertificateInput;
 
 public class SkipVerificationScreen extends VersionedScreen {
     private final Screen verificationScreen;
@@ -19,7 +20,7 @@ public class SkipVerificationScreen extends VersionedScreen {
     private final Toast failedToast = new SystemToast(SystemToast.SystemToastId.PACK_LOAD_FAILURE,
             VersionedText.translatable("automodpack.validation.skip.failed"), 
             VersionedText.translatable("automodpack.retry"));
-    private static final String REQUIRED_TEXT = "I accept the risk";
+    private static final String ENGLISH_REQUIRED_TEXT = "I accept the risk";
     private static final int TIMER_SECONDS = 10;
     private EditBox textField;
     private Button backButton;
@@ -87,9 +88,11 @@ public class SkipVerificationScreen extends VersionedScreen {
     }
 
     private void confirmSkip() {
-        String input = textField.getValue().strip();
+        String input = textField.getValue();
+        String localizedRequiredText = getRequiredText();
         
-        if (input.equals(REQUIRED_TEXT)) {
+        if (CertificateInput.matchesRiskPhrase(input, localizedRequiredText)
+                || CertificateInput.matchesRiskPhrase(input, ENGLISH_REQUIRED_TEXT)) {
             confirmButton.active = false;
             if (this.minecraft != null) {
                 this.minecraft.gui.setScreen(parent);
@@ -123,6 +126,10 @@ public class SkipVerificationScreen extends VersionedScreen {
         return (ticksRemaining + 19) / 20; // Round up
     }
 
+    private String getRequiredText() {
+        return VersionedText.translatable("automodpack.validation.skip.required_text").getString();
+    }
+
     @Override
     public void versionedRender(VersionedMatrices matrices, int mouseX, int mouseY, float delta) {
         int lineHeight = 12; // Consistent line spacing
@@ -154,7 +161,7 @@ public class SkipVerificationScreen extends VersionedScreen {
 
         // Required text to type (displayed prominently)
         drawCenteredTextWithShadow(matrices, this.font,
-                VersionedText.literal("\"" + REQUIRED_TEXT + "\"").withStyle(ChatFormatting.ITALIC),
+                VersionedText.literal("\"" + getRequiredText() + "\"").withStyle(ChatFormatting.ITALIC),
                 this.width / 2, this.height / 2 - 10 + lineHeight, TextColors.WHITE);
     }
 

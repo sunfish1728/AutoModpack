@@ -7,7 +7,6 @@
   "automodpack.restart.secDescription": "您现在要重启吗？",
   "automodpack.restart.confirm": "是，关闭游戏",
   "automodpack.restart.cancel": "否，返回游戏",
-
   "automodpack.danger": "安装模组包",
   "automodpack.danger.description": "此服务器想要将文件下载到你的电脑。",
   "automodpack.danger.secDescription": "所有 JAR 文件都与 Modrinth 或 CurseForge 上的公开文件匹配。",
@@ -36,42 +35,34 @@
   "automodpack.danger.unverified.more": "以及另外 %s 个",
   "automodpack.danger.unverified.confirm": "下载这些未经验证的 JAR",
   "automodpack.danger.acknowledge": "我了解风险，并且信任此服务器。",
-
   "automodpack.changelog.view": "查看更新日志",
   "automodpack.changelog.noChanges": "未发现更改。",
   "automodpack.changelog.openPage": "打开项目页面",
-
   "automodpack.download.calculating": "正在计算...",
   "automodpack.download.eta": "剩余时间：%s",
   "automodpack.download.downloading": "正在下载：",
   "automodpack.download.noFiles": "没有要下载的文件！",
-
   "automodpack.redownload": "重新下载模组包",
   "automodpack.redownload.description": "这可能会修复模组包的问题。",
-
   "automodpack.error": "出错了！",
   "automodpack.error.files": "部分文件下载失败。",
   "automodpack.error.critical": "下载模组包时发生严重错误。",
   "automodpack.error.logs": "请查看日志以获取更多详情。",
-
   "automodpack.fetch": "正在从Modrinth和CurseForge获取直接URL...",
   "automodpack.fetch.found": "找到%s个直接URL。",
-
   "automodpack.validation.title": "证书验证",
   "automodpack.validation.description1": "保护您免受中间人攻击。",
   "automodpack.validation.description2": "这是一次性检查。询问您的服务器运营者。",
-  "automodpack.validation.fingerprint.label": "服务器指纹（简短）：",
+  "automodpack.validation.fingerprint.label": "完整服务器指纹：",
   "automodpack.validation.confirm.text": "粘贴完整指纹以验证：",
   "automodpack.validation.verify": "验证",
   "automodpack.validation.failed": "不匹配！有人可能在冒充服务器。",
-
   "automodpack.validation.skip.title": "安全风险",
   "automodpack.validation.skip.warning1": "未验证时，攻击者可注入恶意模组。",
   "automodpack.validation.skip.warning2": "模组可访问您的文件并执行任意代码。",
   "automodpack.validation.skip.instruction": "仅在您知道自己在做什么时跳过。",
   "automodpack.validation.skip.confirm.text": "输入下述短语以确认：",
   "automodpack.validation.skip.failed": "文本错误",
-
   "automodpack.retry": "重试",
   "automodpack.select": "选择模组包",
   "automodpack.yes": "是",
@@ -80,5 +71,6 @@
   "automodpack.back": "返回",
   "automodpack.wait": "请稍候...",
   "automodpack.skip": "跳过",
-  "automodpack.learnmore": "了解更多"
+  "automodpack.learnmore": "了解更多",
+  "automodpack.validation.skip.required_text": "我接受风险"
 }

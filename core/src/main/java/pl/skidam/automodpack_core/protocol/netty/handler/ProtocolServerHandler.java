@@ -9,6 +9,7 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.stream.ChunkedWriteHandler;
 import io.netty.util.ReferenceCountUtil;
 import pl.skidam.automodpack_core.protocol.netty.NettyServer;
+import pl.skidam.automodpack_core.protocol.MinecraftDownloadHandshake;
 import pl.skidam.automodpack_core.protocol.netty.TrafficShaper;
 import pl.skidam.automodpack_core.protocol.netty.detectors.AMMHDetector;
 import pl.skidam.automodpack_core.protocol.netty.detectors.HAProxyDetector;
@@ -76,6 +77,14 @@ public class ProtocolServerHandler extends ByteToMessageDecoder {
 
     private MatchResult handleMagicCheck(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
         MatchResult result = AMMHDetector.check(in);
+        if (result == MatchResult.MISMATCH) {
+            AMMHDetector.DecodeResult minecraft = MinecraftDownloadHandshake.decode(in);
+            if (minecraft == null) return MatchResult.PARTIAL;
+            if (minecraft.hostname() != null) {
+                onMagicMatch(ctx, in, minecraft);
+                return MatchResult.MATCHED;
+            }
+        }
         if (result != MatchResult.MATCHED) {
             if (result == MatchResult.MISMATCH) onMagicMismatch(ctx, in, out);
             return result;

@@ -36,7 +36,14 @@ public class Jsons {
     public static class ModpackAddresses {
         public InetSocketAddress hostAddress; // modpack host address
         public InetSocketAddress serverAddress; // minecraft server address
+        // Stable zstdnet public entry, captured from the local client, never from a server packet.
+        public InetSocketAddress zstdAddress; // Legacy config migration only.
+        public pl.skidam.automodpack_core.protocol.DownloadRoute route;
         public boolean requiresMagic; // if true, client will use magic packets to connect to the modpack host
+
+        public InetSocketAddress downloadAddress() {
+            return pl.skidam.automodpack_core.protocol.DownloadRoutes.from(this).endpoint();
+        }
 
         public ModpackAddresses() {
             // Default constructor for Gson

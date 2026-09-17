@@ -12,7 +12,7 @@ public class RefreshRequestMessage extends ProtocolMessage {
     public RefreshRequestMessage(byte version, byte[] secret, byte[][] fileHashesList) {
         super(version, REFRESH_REQUEST_TYPE, secret);
         this.fileHashesCount = fileHashesList.length;
-        this.fileHashesLength = fileHashesList[0].length;
+        this.fileHashesLength = fileHashesList.length == 0 ? 0 : fileHashesList[0].length;
         this.fileHashesList = fileHashesList;
     }
 

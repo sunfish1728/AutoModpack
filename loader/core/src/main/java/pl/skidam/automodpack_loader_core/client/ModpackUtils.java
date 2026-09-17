@@ -561,7 +561,7 @@ public class ModpackUtils {
         if (modpackAddresses.isAnyEmpty())
             throw new IllegalArgumentException("Modpack addresses are empty!");
 
-        try (DownloadClient client = DownloadClient.tryCreate(modpackAddresses, secret.secretBytes(), 1, userValidationCallback(modpackAddresses.hostAddress, allowAskingUser))) {
+        try (DownloadClient client = DownloadClient.tryCreate(modpackAddresses, secret.secretBytes(), 1, userValidationCallback(modpackAddresses.downloadAddress(), allowAskingUser))) {
             if (client == null) return Optional.empty();
             var future = operation.apply(client);
             Path path = future.get();
